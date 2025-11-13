@@ -10,11 +10,9 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # --- SECCIÓN CORREGIDA ---
-# Instalar Google Chrome (con el método moderno sin apt-key)
-RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
-    && apt-get update \
-    && apt-get install -y google-chrome-stable \
+# Instalar Firefox-ESR (que sí es compatible con arm64)
+RUN apt-get update \
+    && apt-get install -y firefox-esr \
     && rm -rf /var/lib/apt/lists/*
 # --- FIN DE LA SECCIÓN CORREGIDA ---
 
