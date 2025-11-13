@@ -6,12 +6,14 @@ Requiere: selenium, webdriver-manager, openpyxl, pandas
 """
 
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
+# --- CAMBIOS PARA FIREFOX ---
+from selenium.webdriver.firefox.service import Service
+from selenium.webdriver.firefox.options import Options
+from webdriver_manager.firefox import GeckoDriverManager
+# --- FIN CAMBIOS ---
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
 import os
 import time
 from datetime import datetime
@@ -47,23 +49,27 @@ def descargar_excel_temporal(url, carpeta_temp="temp_descargas"):
         shutil.rmtree(carpeta_completa)
     os.makedirs(carpeta_completa)
     
-    chrome_options = Options()
-    prefs = {
-        "download.default_directory": carpeta_completa,
-        "download.prompt_for_download": False,
-        "download.directory_upgrade": True,
-        "safebrowsing.enabled": True
-    }
-    chrome_options.add_experimental_option("prefs", prefs)
-    chrome_options.add_argument("--headless")  # Modo sin interfaz gráfica
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=1920,1080")
+    # --- OPCIONES PARA FIREFOX ---
+    firefox_options = Options()
+    firefox_options.add_argument("--headless")
+    firefox_options.add_argument("--no-sandbox")
+    firefox_options.add_argument("--disable-dev-shm-usage")
+    firefox_options.add_argument("--disable-gpu")
+    firefox_options.add_argument("--window-size=1920,1080")
+    
+    # Configuración de preferencias de descarga para Firefox
+    firefox_options.set_preference("browser.download.folderList", 2) # 2 = Usar carpeta personalizada
+    firefox_options.set_preference("browser.download.dir", carpeta_completa)
+    firefox_options.set_preference("browser.download.useDownloadDir", True)
+    firefox_options.set_preference("browser.download.prompt.for.download", False)
+    firefox_options.set_preference("browser.helperApps.neverAsk.saveToDisk", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/octet-stream")
+    # --- FIN OPCIONES FIREFOX ---
     
     try:
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
+        # --- USAR GECKODRIVER Y FIREFOX ---
+        service = Service(GeckoDriverManager().install())
+        driver = webdriver.Firefox(service=service, options=firefox_options)
+        # --- FIN CAMBIO DRIVER ---
         
         logging.info("Accediendo a la página de ANSV...")
         driver.get(url)
