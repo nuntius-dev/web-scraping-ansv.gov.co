@@ -33,7 +33,10 @@ COPY crontab /etc/cron.d/ansv-cron
 RUN chmod 0644 /etc/cron.d/ansv-cron
 
 # Aplicar el cron job
-RUN crontab /etc/cron.d/ansv-cron
+# (Se añade un 'echo' para forzar la línea nueva al final del archivo,
+#  lo cual es un requisito de crontab)
+RUN echo "" >> /etc/cron.d/ansv-cron \
+    && crontab /etc/cron.d/ansv-cron
 
 # Crear directorio para logs
 RUN mkdir -p /app/logs
