@@ -2,14 +2,14 @@
 """
 Script de PRODUCCIÓN para descargar archivo Excel de ubicaciones ANSV
 Se ejecuta diariamente a las 6 AM mediante cron
-Requiere: selenium, webdriver-manager, openpyxl, pandas
+Requiere: selenium, openpyxl, pandas
 """
 
 from selenium import webdriver
-# --- CAMBIOS PARA FIREFOX ---
+# --- CAMBIOS PARA GECKODRIVER MANUAL ---
 from selenium.webdriver.firefox.service import Service
 from selenium.webdriver.firefox.options import Options
-from webdriver_manager.firefox import GeckoDriverManager
+# NO importamos GeckoDriverManager
 # --- FIN CAMBIOS ---
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -58,7 +58,7 @@ def descargar_excel_temporal(url, carpeta_temp="temp_descargas"):
     firefox_options.add_argument("--window-size=1920,1080")
     
     # Configuración de preferencias de descarga para Firefox
-    firefox_options.set_preference("browser.download.folderList", 2) # 2 = Usar carpeta personalizada
+    firefox_options.set_preference("browser.download.folderList", 2)
     firefox_options.set_preference("browser.download.dir", carpeta_completa)
     firefox_options.set_preference("browser.download.useDownloadDir", True)
     firefox_options.set_preference("browser.download.prompt.for.download", False)
@@ -66,8 +66,9 @@ def descargar_excel_temporal(url, carpeta_temp="temp_descargas"):
     # --- FIN OPCIONES FIREFOX ---
     
     try:
-        # --- USAR GECKODRIVER Y FIREFOX ---
-        service = Service(GeckoDriverManager().install())
+        # --- USAR GECKODRIVER DESDE EL PATH ---
+        # No usamos GeckoDriverManager. Selenium buscará en /usr/local/bin/
+        service = Service()
         driver = webdriver.Firefox(service=service, options=firefox_options)
         # --- FIN CAMBIO DRIVER ---
         
@@ -141,8 +142,6 @@ def descargar_excel_temporal(url, carpeta_temp="temp_descargas"):
 def extraer_fecha_del_nombre(nombre_archivo):
     """
     Extrae la fecha del nombre del archivo descargado
-    Formato esperado: 202510032325-ansv-fotodeteccion.xlsx
-    Retorna: "2025-10-03" o None si no se puede extraer
     """
     try:
         nombre_base = os.path.basename(nombre_archivo)
@@ -199,19 +198,16 @@ def ejecutar_descarga_diaria():
     """
     url = "https://fotodeteccion.ansv.gov.co/ubicaciones-aprobadas.html"
     
-    # Obtener fecha actual
     ahora = datetime.now()
     año_actual = ahora.year
     mes_actual = ahora.month
     dia_actual = ahora.day
     
-    # Crear estructura de carpetas
     carpeta_año = str(año_actual)
     if not os.path.exists(carpeta_año):
         os.makedirs(carpeta_año)
         logging.info(f"Carpeta '{carpeta_año}' creada")
     
-    # Nombre del archivo del mes
     nombre_mes = obtener_nombre_mes(mes_actual)
     archivo_mes = os.path.join(carpeta_año, f"{nombre_mes}.xlsx")
     
@@ -221,27 +217,22 @@ def ejecutar_descarga_diaria():
     logging.info(f"Fecha: {ahora.strftime('%Y-%m-%d %H:%M:%S')}")
     logging.info(f"Archivo destino: {archivo_mes}")
     
-    # Descargar archivo temporal
     logging.info("Iniciando descarga desde ANSV...")
     archivo_temporal = descargar_excel_temporal(url)
     
     if archivo_temporal:
-        # Extraer fecha del nombre del archivo
         fecha_extraida = extraer_fecha_del_nombre(archivo_temporal)
         
         if fecha_extraida:
             nombre_hoja = fecha_extraida
         else:
-            # Fallback: usar fecha actual
             nombre_hoja = f"{año_actual}-{mes_actual:02d}-{dia_actual:02d}"
             logging.warning(f"Usando fecha actual como fallback: {nombre_hoja}")
         
-        # Agregar al archivo del mes
         logging.info("Procesando y agregando hoja al archivo mensual...")
         if agregar_hoja_a_excel(archivo_temporal, archivo_mes, nombre_hoja):
             logging.info(f"✓ Hoja '{nombre_hoja}' agregada exitosamente")
             
-            # Mostrar información del archivo
             try:
                 wb = load_workbook(archivo_mes)
                 logging.info(f"El archivo ahora tiene {len(wb.sheetnames)} hoja(s)")
@@ -254,7 +245,6 @@ def ejecutar_descarga_diaria():
             logging.info("✓ DESCARGA COMPLETADA EXITOSAMENTE")
             logging.info("=" * 70)
             
-            # Limpiar carpeta temporal
             if os.path.exists("temp_descargas"):
                 shutil.rmtree("temp_descargas")
             
