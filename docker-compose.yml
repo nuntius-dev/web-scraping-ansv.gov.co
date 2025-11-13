@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  ansv-scraper:
+    build: .
+    container_name: ansv-scraper
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - TZ=America/Bogota
+    working_dir: /app/data
