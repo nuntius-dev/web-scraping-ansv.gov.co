@@ -68,7 +68,7 @@ def descargar_excel_temporal(url, carpeta_temp="temp_descargas"):
     try:
         # --- USAR GECKODRIVER DESDE EL PATH ---
         # No usamos GeckoDriverManager. Selenium buscará en /usr/local/bin/
-        service = Service()
+        service = Service(executable_path="/usr/local/bin/geckodriver")
         driver = webdriver.Firefox(service=service, options=firefox_options)
         # --- FIN CAMBIO DRIVER ---
         
