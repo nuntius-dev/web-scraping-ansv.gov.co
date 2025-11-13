@@ -7,14 +7,19 @@ RUN apt-get update && apt-get install -y \
     unzip \
     curl \
     cron \
+    firefox-esr \
     && rm -rf /var/lib/apt/lists/*
 
-# --- SECCIÓN CORREGIDA ---
-# Instalar Firefox-ESR (que sí es compatible con arm64)
-RUN apt-get update \
-    && apt-get install -y firefox-esr \
-    && rm -rf /var/lib/apt/lists/*
-# --- FIN DE LA SECCIÓN CORREGIDA ---
+# --- NUEVA SECCIÓN ---
+# Instalar geckodriver para ARM64 (aarch64) manualmente
+# ya que webdriver-manager falla en la detección de arquitectura
+ENV GECKODRIVER_VERSION=v0.36.0
+RUN wget -q "https://github.com/mozilla/geckodriver/releases/download/${GECKODRIVER_VERSION}/geckodriver-${GECKODRIVER_VERSION}-linux-aarch64.tar.gz" \
+    && tar -xzf geckodriver-${GECKODRIVER_VERSION}-linux-aarch64.tar.gz \
+    && rm geckodriver-${GECKODRIVER_VERSION}-linux-aarch64.tar.gz \
+    && chmod +x geckodriver \
+    && mv geckodriver /usr/local/bin/geckodriver
+# --- FIN DE LA NUEVA SECCIÓN ---
 
 # Crear directorio de trabajo
 WORKDIR /app
@@ -26,16 +31,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copiar script de Python
 COPY ansv_scraper.py .
+
 # Copiar script de cron
 COPY crontab /etc/cron.d/ansv-cron
-
-# Dar permisos al archivo cron
-RUN chmod 0644 /etc/cron.d/ansv-cron
-
-# Aplicar el cron job
-# (Se añade un 'echo' para forzar la línea nueva al final del archivo,
-#  lo cual es un requisito de crontab)
+# Dar permisos y forzar la línea nueva requerida por cron
 RUN echo "" >> /etc/cron.d/ansv-cron \
+    && chmod 0644 /etc/cron.d/ansv-cron \
     && crontab /etc/cron.d/ansv-cron
 
 # Crear directorio para logs
@@ -48,5 +49,5 @@ RUN chmod +x /entrypoint.sh
 # Volumen para persistir datos
 VOLUME ["/app/data"]
 
-# Ejecutar cron en foreground
+# Ejecutar script de inicio
 ENTRYPOINT ["/entrypoint.sh"]
