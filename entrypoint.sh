@@ -4,16 +4,17 @@
 mkdir -p /app/logs
 touch /app/logs/cron.log
 
-# Imprimir zona horaria configurada
 echo "Zona horaria configurada: $(date)"
 echo "Iniciando servicio de descarga automática ANSV..."
-echo "El script se ejecutará todos los días a las 6:00 AM"
 
 # Iniciar cron en segundo plano
-echo "Iniciando cron..."
+echo "Iniciando cron... (tareas se ejecutarán en background)"
 cron
 
-# Iniciar 'tail' en primer plano.
-# Esto es lo que mantendrá el contenedor vivo.
-# Ahora tendrá éxito porque el archivo 'cron.log' ya existe.
-tail -f /app/logs/cron.log
+# Iniciar la API de Flask en primer plano
+# Esto mantendrá el contenedor vivo
+echo "Iniciando API de Flask en http://0.0.0.0:8080..."
+export FLASK_APP=ansv_scraper.py
+export FLASK_RUN_PORT=8080
+export FLASK_RUN_HOST=0.0.0.0
+flask run
