@@ -1,4 +1,4 @@
 # Ejecutar script todos los días a las 6:00 AM (hora de Colombia)
 TZ=America/Bogota
 # Ejecutar script todos los días a las 6:00 AM (hora de Colombia)
-0 6 * * * cd /app/data && /usr/local/bin/python /app/ansv_scraper.py >> /app/logs/cron.log 2>&1
+0 6 * * * /usr/local/bin/python /app/ansv_scraper.py scrape >> /app/logs/cron.log 2>&1
