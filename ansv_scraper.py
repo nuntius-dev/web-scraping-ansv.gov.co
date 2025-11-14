@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 """
-Script de PRODUCCIÓN para descargar archivo Excel de ubicaciones ANSV
-Se ejecuta diariamente a las 6 AM mediante cron
-Requiere: selenium, openpyxl, pandas
+Script de PRODUCCIÓN (Scraper + API)
+- Scraper: Se ejecuta diariamente a las 6 AM mediante cron (llamado con "scrape")
+- API: Se ejecuta con Flask para servir los datos como JSON.
 """
 
 from selenium import webdriver
-# --- CAMBIOS PARA GECKODRIVER MANUAL ---
 from selenium.webdriver.firefox.service import Service
 from selenium.webdriver.firefox.options import Options
-# NO importamos GeckoDriverManager
-# --- FIN CAMBIOS ---
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -22,9 +19,11 @@ from openpyxl import load_workbook
 import shutil
 import logging
 import sys
+import json
+from flask import Flask, jsonify, request, abort
 
-# Configurar logging
-log_dir = "logs"
+# --- Configuración de Logging ---
+log_dir = "/app/logs" # Usar ruta absoluta
 if not os.path.exists(log_dir):
     os.makedirs(log_dir)
 
@@ -38,18 +37,24 @@ logging.basicConfig(
     ]
 )
 
-def descargar_excel_temporal(url, carpeta_temp="temp_descargas"):
+# --- Configuración de la Aplicación ---
+DATA_DIR = "/app/data" # Directorio de volúmen de datos
+app = Flask(__name__)
+
+# ======================================================================
+# LÓGICA DEL SCRAPER (Descarga de archivos)
+# ======================================================================
+
+def descargar_excel_temporal(url):
     """
     Descarga el archivo Excel a una carpeta temporal
     """
-    carpeta_completa = os.path.abspath(carpeta_temp)
+    carpeta_temp = os.path.join(DATA_DIR, "temp_descargas")
     
-    # Limpiar carpeta temporal si existe
-    if os.path.exists(carpeta_completa):
-        shutil.rmtree(carpeta_completa)
-    os.makedirs(carpeta_completa)
+    if os.path.exists(carpeta_temp):
+        shutil.rmtree(carpeta_temp)
+    os.makedirs(carpeta_temp)
     
-    # --- OPCIONES PARA FIREFOX ---
     firefox_options = Options()
     firefox_options.add_argument("--headless")
     firefox_options.add_argument("--no-sandbox")
@@ -57,26 +62,20 @@ def descargar_excel_temporal(url, carpeta_temp="temp_descargas"):
     firefox_options.add_argument("--disable-gpu")
     firefox_options.add_argument("--window-size=1920,1080")
     
-    # Configuración de preferencias de descarga para Firefox
     firefox_options.set_preference("browser.download.folderList", 2)
-    firefox_options.set_preference("browser.download.dir", carpeta_completa)
+    firefox_options.set_preference("browser.download.dir", carpeta_temp)
     firefox_options.set_preference("browser.download.useDownloadDir", True)
     firefox_options.set_preference("browser.download.prompt.for.download", False)
     firefox_options.set_preference("browser.helperApps.neverAsk.saveToDisk", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/octet-stream")
-    # --- FIN OPCIONES FIREFOX ---
     
     try:
-        # --- USAR GECKODRIVER DESDE EL PATH ---
-        # No usamos GeckoDriverManager. Selenium buscará en /usr/local/bin/
         service = Service(executable_path="/usr/local/bin/geckodriver")
         driver = webdriver.Firefox(service=service, options=firefox_options)
-        # --- FIN CAMBIO DRIVER ---
         
         logging.info("Accediendo a la página de ANSV...")
         driver.get(url)
         time.sleep(3)
         
-        # Buscar y cambiar al iframe
         iframe = WebDriverWait(driver, 15).until(
             EC.presence_of_element_located((By.TAG_NAME, "iframe"))
         )
@@ -84,7 +83,6 @@ def descargar_excel_temporal(url, carpeta_temp="temp_descargas"):
         logging.info("Iframe encontrado, cambiando contexto...")
         time.sleep(2)
         
-        # Buscar el botón de descarga
         selectores_posibles = [
             "//div[contains(@class, 'dx-datagrid-export-button')]",
             "//div[@aria-label='export-excel-button']",
@@ -112,16 +110,15 @@ def descargar_excel_temporal(url, carpeta_temp="temp_descargas"):
         except:
             driver.execute_script("arguments[0].click();", boton)
         
-        # Esperar a que se complete la descarga
         tiempo_espera = 60
         tiempo_transcurrido = 0
         
         while tiempo_transcurrido < tiempo_espera:
-            archivos = os.listdir(carpeta_completa)
+            archivos = os.listdir(carpeta_temp)
             archivos_excel = [f for f in archivos if f.endswith(('.xlsx', '.xls')) and not f.endswith('.crdownload')]
             
             if archivos_excel:
-                archivo_descargado = os.path.join(carpeta_completa, archivos_excel[0])
+                archivo_descargado = os.path.join(carpeta_temp, archivos_excel[0])
                 logging.info(f"Archivo descargado exitosamente: {archivos_excel[0]}")
                 driver.quit()
                 return archivo_descargado
@@ -203,7 +200,7 @@ def ejecutar_descarga_diaria():
     mes_actual = ahora.month
     dia_actual = ahora.day
     
-    carpeta_año = str(año_actual)
+    carpeta_año = os.path.join(DATA_DIR, str(año_actual))
     if not os.path.exists(carpeta_año):
         os.makedirs(carpeta_año)
         logging.info(f"Carpeta '{carpeta_año}' creada")
@@ -245,8 +242,8 @@ def ejecutar_descarga_diaria():
             logging.info("✓ DESCARGA COMPLETADA EXITOSAMENTE")
             logging.info("=" * 70)
             
-            if os.path.exists("temp_descargas"):
-                shutil.rmtree("temp_descargas")
+            if os.path.exists(os.path.join(DATA_DIR, "temp_descargas")):
+                shutil.rmtree(os.path.join(DATA_DIR, "temp_descargas"))
             
             return True
         else:
@@ -259,10 +256,93 @@ def ejecutar_descarga_diaria():
         logging.info("=" * 70)
         return False
 
-if __name__ == "__main__":
+# ======================================================================
+# LÓGICA DE LA API (Servidor de datos)
+# ======================================================================
+
+def get_excel_data(sheet_name):
+    """
+    Función auxiliar para leer una hoja específica de un archivo Excel
+    """
     try:
-        resultado = ejecutar_descarga_diaria()
-        sys.exit(0 if resultado else 1)
+        # Determinar el archivo basado en la fecha
+        fecha = datetime.strptime(sheet_name, '%Y-%m-%d')
+        año = fecha.year
+        nombre_mes = obtener_nombre_mes(fecha.month)
+        archivo_path = os.path.join(DATA_DIR, str(año), f"{nombre_mes}.xlsx")
+        
+        if not os.path.exists(archivo_path):
+            return None, "Archivo del mes no encontrado"
+            
+        # Leer la hoja específica
+        df = pd.read_excel(archivo_path, sheet_name=sheet_name)
+        # Convertir a JSON (orient="records" crea una lista de objetos)
+        result_json = df.to_json(orient="records")
+        return json.loads(result_json), None
+        
+    except ValueError:
+        return None, "Formato de fecha incorrecto. Usar YYYY-MM-DD"
+    except FileNotFoundError:
+        return None, "Archivo del mes no encontrado"
     except Exception as e:
-        logging.error(f"Error crítico: {str(e)}")
-        sys.exit(1)
+        if "No sheet named" in str(e):
+             return None, f"Datos para la fecha '{sheet_name}' no encontrados en el archivo"
+        logging.error(f"Error al leer Excel: {str(e)}")
+        return None, str(e)
+
+@app.route('/')
+def index():
+    return jsonify({
+        "servicio": "API de Scraper ANSV",
+        "estado": "en_linea",
+        "endpoints": {
+            "/api/datos/hoy": "Obtiene los datos de la última descarga (hoy)",
+            "/api/datos/fecha/YYYY-MM-DD": "Obtiene los datos para una fecha específica"
+        }
+    })
+
+@app.route('/api/datos/hoy', methods=['GET'])
+def get_datos_hoy():
+    # Usar la zona horaria correcta (UTC-5)
+    hoy_str = (datetime.now() - pd.Timedelta(hours=5)).strftime('%Y-%m-%d')
+    
+    datos, error = get_excel_data(hoy_str)
+    
+    if error:
+        return jsonify({"error": error}), 404
+    
+    return jsonify({
+        "fecha": hoy_str,
+        "registros": len(datos),
+        "datos": datos
+    })
+
+@app.route('/api/datos/fecha/<string:fecha>', methods=['GET'])
+def get_datos_por_fecha(fecha):
+    datos, error = get_excel_data(fecha)
+    
+    if error:
+        return jsonify({"error": error}), 404
+    
+    return jsonify({
+        "fecha": fecha,
+        "registros": len(datos),
+        "datos": datos
+    })
+
+# Este es el punto de entrada para CRON
+if __name__ == "__main__":
+    # Si el script se llama con "python ansv_scraper.py scrape"
+    if len(sys.argv) > 1 and sys.argv[1] == 'scrape':
+        try:
+            resultado = ejecutar_descarga_diaria()
+            sys.exit(0 if resultado else 1)
+        except Exception as e:
+            logging.error(f"Error crítico en scraper: {str(e)}")
+            sys.exit(1)
+    else:
+        # Este bloque NO se usa cuando se inicia con "flask run"
+        # 'flask run' detecta la variable 'app' automáticamente.
+        logging.info("Este script debe iniciarse con 'flask run' para la API.")
+        logging.info("O con 'python ansv_scraper.py scrape' para el scraper.")
+        pass
