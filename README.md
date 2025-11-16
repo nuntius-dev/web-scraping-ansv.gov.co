@@ -1,440 +1,208 @@
-# 📘 INSTRUCTIVO COMPLETO: Automatización ANSV con Docker en VPS
+# 📘 INSTRUCTIVO COMPLETO: Scraper Automatizado y API JSON de ANSV con Easypanel
 
 ## 🎯 Objetivo
-Desplegar un sistema automatizado que descargue diariamente a las 6:00 AM los datos de fotodetección de ANSV y los organice en archivos Excel mensuales con hojas diarias.
 
----
+Desplegar un sistema de dos componentes en un servidor VPS usando **Easypanel**:
+
+1.  **Un Scraper Automatizado:** Descarga diariamente a las 6:00 AM (hora de Colombia) los datos de fotodetección de ANSV usando Selenium/Firefox.
+2.  **Una API JSON:** Expone los datos descargados a través de una API web simple (construida con Flask), permitiendo el consumo de datos en formato JSON desde cualquier aplicación.
+
+Este instructivo asume el despliegue en un servidor **ARM64 (aarch64)** (como los de Oracle Cloud, AWS Graviton, etc.).
+
+-----
+
+## 🛠️ Arquitectura Final del Proyecto
+
+Este sistema utiliza un único contenedor Docker orquestado por Easypanel, pero ejecuta dos procesos de forma inteligente:
+
+  * **Plataforma:** Easypanel.
+  * **Fuente de Código:** Un repositorio Git (este mismo), usando la metodología "Push-to-Deploy".
+  * **Contenedor:** Una imagen de Docker personalizada basada en `python:3.11-slim`.
+  * **Proceso Principal (API):** Un servidor **Flask** se ejecuta como el proceso principal. Esto mantiene el contenedor vivo y sirve los datos a través de endpoints HTTP (ej. `/api/datos/hoy`).
+  * **Proceso Secundario (Scraper):** Un servicio **Cron** se ejecuta en segundo plano *dentro del mismo contenedor*. A las 6:00 AM, ejecuta el script de Python con un argumento especial (`scrape`) para realizar la descarga de datos.
+  * **Scraping:** Se usa **Selenium** con **Firefox-ESR** y un `geckodriver` de **aarch64** instalado manualmente, ya que Google Chrome no está disponible para ARM64 en Linux.
+  * **Persistencia:** Se utilizan **Volúmenes** de Easypanel para que los archivos Excel (`ansv-data`) y los logs (`ansv-logs`) persistan entre reinicios y despliegues.
+
+-----
 
 ## 📋 Requisitos Previos
 
-### 1. VPS/Servidor
-- **RAM mínima**: 2 GB
-- **Almacenamiento**: 10 GB libres
-- **Sistema Operativo**: Ubuntu 20.04 o superior / Debian 11 o superior
-- **Proveedores recomendados**:
-  - DigitalOcean (desde $6/mes)
-  - Linode (desde $5/mes)
-  - AWS Lightsail (desde $5/mes)
-  - Contabo (desde €4/mes)
+  * **Servidor VPS:** Un VPS (preferentemente con arquitectura **ARM64**) con Ubuntu 20.04+ o Debian 11+.
+  * **Easypanel Instalado:** Debes tener una instancia de Easypanel funcionando en tu VPS.
+  * **Repositorio Git:** Este repositorio (`https://github.com/nuntius-dev/web-scraping-ansv.gov.co`) es la fuente del proyecto.
 
-### 2. Acceso al Servidor
-- Acceso SSH con usuario root o sudo
+-----
 
----
+## 📂 Archivos del Proyecto
 
-## 🚀 OPCIÓN 1: Despliegue con Docker (RECOMENDADO)
+Este repositorio contiene 5 archivos esenciales:
 
-### Paso 1: Conectarse al VPS
+1.  **`ansv_scraper.py`**: El script de Python que contiene **tanto la lógica del scraper como la API de Flask**.
+2.  **`Dockerfile`**: Las instrucciones para construir la imagen Docker, optimizada para **ARM64**, instalando Firefox-ESR y el `geckodriver` de `aarch64` manualmente.
+3.  **`requirements.txt`**: Las librerías de Python necesarias (Selenium, Pandas, Flask, etc.).
+4.  **`crontab`**: La definición de la tarea programada que se ejecuta a las 6:00 AM, llamando al script con el argumento `scrape`.
+5.  **`entrypoint.sh`**: El script de inicio del contenedor. Inicia `cron` en segundo plano y luego `flask run` como proceso principal para servir la API.
 
-```bash
-ssh root@TU_IP_DEL_VPS
-# o si tienes usuario con sudo:
-ssh tu_usuario@TU_IP_DEL_VPS
-```
+*(Nota: No necesitas crear estos archivos, ya existen en este repositorio).*
 
-### Paso 2: Actualizar el Sistema
+-----
 
-```bash
-sudo apt update && sudo apt upgrade -y
-```
+## 🚀 Guía de Despliegue en Easypanel
 
-### Paso 3: Instalar Docker
+Esta es la guía completa para desplegar este repositorio directamente.
 
-```bash
-# Instalar Docker
-curl -fsSL https://get.docker.com -o get-docker.sh
-sudo sh get-docker.sh
+### Paso 1: Crear la Aplicación en Easypanel
 
-# Iniciar Docker
-sudo systemctl start docker
-sudo systemctl enable docker
+1.  Inicia sesión en tu panel de Easypanel.
+2.  Ve al proyecto deseado (ej. `clientes`).
+3.  Haz clic en **"New App"** (Nueva App).
 
-# Verificar instalación
-docker --version
-```
+### Paso 2: Configurar la Fuente (Source)
 
-### Paso 4: Instalar Docker Compose
+1.  Selecciona **"Git"**.
+2.  Conecta tu cuenta de GitHub (si no lo has hecho).
+3.  Completa los campos **usando este repositorio**:
+      * **Owner:** `nuntius-dev`
+      * **Repository:** `web-scraping-ansv.gov.co`
+      * **Branch:** `main` (o la rama que desees desplegar).
+      * **Build Path:** `/` (déjalo como está, una sola barra).
+4.  Haz clic en **"Save"** (Guardar).
 
-```bash
-sudo apt install docker-compose -y
+### Paso 3: Configurar la Compilación (Build)
 
-# Verificar instalación
-docker-compose --version
-```
+1.  Después de guardar, serás llevado a la pestaña **"Build"**.
+2.  Selecciona la opción **"Dockerfile"**.
+3.  En el campo "Dockerfile", escribe: `Dockerfile`
+4.  Haz clic en **"Save"** (Guardar).
 
-### Paso 5: Crear Estructura de Proyecto
+### Paso 4: Configurar Variables de Entorno (Environment)
 
-```bash
-# Crear directorio del proyecto
-mkdir -p ~/ansv-scraper
-cd ~/ansv-scraper
+1.  Ve a la pestaña **"Deploy"**.
+2.  En la sección **"Environment Variables"**, añade la zona horaria:
+      * **Name:** `TZ`
+      * **Value:** `America/Bogota`
+3.  Haz clic en **"Save"** (Guardar).
 
-# Crear subdirectorios
-mkdir -p data logs
-```
+### Paso 5: Configurar Volúmenes (Storage)
 
-### Paso 6: Crear Archivos del Proyecto
+¡Este paso es crítico para que tus datos persistan\!
 
-#### 6.1 Crear `ansv_scraper.py`
+1.  Ve a la pestaña **"Storage"** (Almacenamiento) en el menú de la izquierda de tu app.
+2.  Usa **"Volume Mounts"** (Montajes de Volumen). Esto permite que Easypanel los cree y gestione por ti.
+3.  **Añade el volumen de DATOS:**
+      * Haz clic en **`Add Volume Mount`**.
+      * **Volume Name:** `ansv-data`
+      * **Container Path:** `/app/data` (Debe ser exactamente este).
+4.  **Añade el volumen de LOGS:**
+      * Haz clic en **`Add Volume Mount`**.
+      * **Volume Name:** `ansv-logs`
+      * **Container Path:** `/app/logs` (Debe ser exactamente este).
 
-```bash
-nano ansv_scraper.py
-```
+### Paso 6: Configurar Puertos (Ports)
 
-Copia el contenido del artifact "Script PRODUCCIÓN: Descarga Diaria Excel ANSV" y pégalo aquí.
+1.  Ve a la pestaña **"Deploy"**.
+2.  Baja a la sección **"Ports"**.
+3.  Añade el mapeo para la API de Flask:
+      * **Container Port:** `8080` (Debe ser `8080`, como se definió en `entrypoint.sh` y `Dockerfile`).
+      * **Host Port:** Déjalo vacío. Easypanel asignará uno automáticamente.
+4.  Haz clic en **"Save"** (Guardar).
 
-Guarda con: `Ctrl + O`, `Enter`, luego `Ctrl + X`
+### Paso 7: Desplegar (Deploy)
 
-#### 6.2 Crear `requirements.txt`
+1.  Ahora, haz clic en el botón grande de **"Deploy"** (Desplegar).
+2.  Easypanel clonará el repositorio, construirá la imagen de Docker (esto puede tardar varios minutos la primera vez) e iniciará el contenedor.
+3.  Puedes ver el progreso en la pestaña **"Logs"**. Deberías ver la salida de Flask, indicando que el servidor está corriendo en el puerto 8080.
 
-```bash
-nano requirements.txt
-```
+### Paso 8: Configurar el Dominio (Domains)
 
-Copia:
-```
-selenium==4.15.2
-webdriver-manager==4.0.1
-openpyxl==3.1.2
-pandas==2.1.3
-```
+1.  Una vez que el despliegue sea exitoso y el servicio esté "Running", ve a la pestaña **"Domains"**.
+2.  Añade un dominio o subdominio para acceder a tu API (ej. `ansv-api.tu-dominio.com`).
+3.  Asegúrate de que apunte al puerto `8080`.
+4.  Guarda y espera a que se genere el SSL.
 
-Guarda y cierra.
+¡Listo\! Tu API y tu scraper están 100% operativos.
 
-#### 6.3 Crear `Dockerfile`
+-----
 
-```bash
-nano Dockerfile
-```
+## 📊 Endpoints de la API (Uso)
 
-Copia el contenido del artifact "Dockerfile para ANSV Scraper" y pégalo aquí.
+Una vez desplegado, puedes acceder a tu API. Si tu dominio es `https://ansv-api.ejemplo.com`:
 
-Guarda y cierra.
+  * **Endpoint Raíz (Status):** `https://ansv-api.ejemplo.com/`
 
-#### 6.4 Crear `docker-compose.yml`
+      * **Respuesta:** `{"servicio":"API de Scraper ANSV", "estado":"en_linea", ...}`
+      * Útil para saber si la API está funcionando.
 
-```bash
-nano docker-compose.yml
-```
+  * **Endpoint de Hoy:** `https://ansv-api.ejemplo.com/api/datos/hoy`
 
-Copia el contenido del artifact "docker-compose.yml" y pégalo aquí.
+      * **Respuesta:** Devuelve un JSON con los datos de la hoja correspondiente al día de hoy (en zona horaria de Bogotá).
 
-Guarda y cierra.
+  * **Endpoint por Fecha:** `https://ansv-api.ejemplo.com/api/datos/fecha/YYYY-MM-DD`
 
-#### 6.5 Crear `crontab`
+      * **Ejemplo:** `.../api/datos/fecha/2025-11-14`
+      * **Respuesta:** Devuelve un JSON con los datos de la hoja para la fecha especificada.
 
-```bash
-nano crontab
-```
+  * **Respuesta de Error (404):**
 
-Copia el contenido del artifact "crontab" y pégalo aquí.
+      * Si el scraper aún no se ha ejecutado o no hay datos para esa fecha, recibirás un error 404 con un mensaje JSON, ej: `{"error": "Datos para la fecha '...' no encontrados"}`.
 
-Guarda y cierra.
+-----
 
-#### 6.6 Crear `entrypoint.sh`
+## 🔧 Mantenimiento y Pruebas en Easypanel
 
-```bash
-nano entrypoint.sh
-```
+  * **Ver Logs de la API:**
 
-Copia el contenido del artifact "entrypoint.sh" y pégalo aquí.
+      * Ve a la pestaña **"Logs"** de tu app. Verás la salida de Flask y los mensajes de inicio.
 
-Guarda y cierra.
+  * **Ver Logs del Scraper (Cron):**
 
-### Paso 7: Verificar Estructura
+      * Ve a **"Storage"** -\> (tu volumen `ansv-logs`) -\> y abre el archivo `cron.log`. Ahí verás la salida de la ejecución de las 6:00 AM.
 
-```bash
-ls -la
-```
+  * **Probar el Scraper Manualmente (¡Muy útil\!):**
 
-Deberías ver:
-```
-ansv_scraper.py
-requirements.txt
-Dockerfile
-docker-compose.yml
-crontab
-entrypoint.sh
-data/
-logs/
-```
+    1.  Ve a la pestaña **"Shell"** de tu app.
+    2.  Haz clic en **"Connect"**.
+    3.  En la terminal, ejecuta el comando de scrape:
+        ```bash
+        python /app/ansv_scraper.py scrape
+        ```
+    4.  Verás la salida del scraper en tiempo real. Esto es perfecto para forzar una descarga sin esperar a las 6 AM. Una vez que termine, los endpoints de la API tendrán los datos.
 
-### Paso 8: Construir y Ejecutar el Contenedor
+  * **Ver los Archivos Excel Generados:**
 
-```bash
-# Construir la imagen (toma 5-10 minutos)
-docker-compose build
+    1.  Ve al menú **"Storage"** en la barra lateral izquierda de Easypanel.
+    2.  Busca tu volumen `ansv-data` y haz clic en él.
+    3.  Podrás navegar y ver las carpetas (`2025`) y los archivos (`Noviembre.xlsx`) que ha generado el scraper.
 
-# Iniciar el contenedor
-docker-compose up -d
-```
+  * **Actualizar el Código:**
 
-### Paso 9: Verificar que Está Funcionando
+    1.  Simplemente haz `git push` a tu repositorio de GitHub.
+    2.  Vuelve a Easypanel y haz clic en el botón **"Deploy"**.
+    3.  Easypanel detectará el nuevo commit, reconstruirá la imagen y reiniciará el servicio con el nuevo código, sin perder los datos de los volúmenes.
 
-```bash
-# Ver logs del contenedor
-docker-compose logs -f
+-----
 
-# Ver estado del contenedor
-docker-compose ps
+## 🔍 Solución de Problemas (Lecciones Aprendidas)
 
-# Ver logs de cron
-tail -f logs/cron.log
-```
+Esta sección documenta los problemas encontrados y resueltos para que este repositorio funcione en un VPS ARM64:
 
-### Paso 10: Probar Ejecución Manual (Opcional)
+  * **Problema:** `exit code: 100` y errores de dependencias `amd64`.
 
-```bash
-# Ejecutar el script manualmente para probar
-docker-compose exec ansv-scraper python /app/ansv_scraper.py
+      * **Causa:** Se intentó instalar `google-chrome` en un servidor **ARM64 (aarch64)**. Google Chrome no tiene versión para Linux ARM64.
+      * **Solución:** Se reemplazó Chrome por **`firefox-esr`**, que sí está disponible en los repositorios de Debian para ARM64.
 
-# Ver archivos generados
-ls -la data/
-```
+  * **Problema:** `webdriver-manager` descarga el `geckodriver` incorrecto (`linux64` en lugar de `aarch64`).
 
----
+      * **Causa:** `webdriver-manager` no detecta correctamente la arquitectura ARM64.
+      * **Error Resultante:** `[Errno 8] Exec format error`.
+      * **Solución:** Se eliminó `webdriver-manager`. El `Dockerfile` ahora **descarga manualmente** la versión correcta (`geckodriver-...-linux-aarch64.tar.gz`) y la coloca en `/usr/local/bin/`.
 
-## 📊 Estructura de Archivos Generados
+  * **Problema:** `Message: Unable to obtain driver for firefox using Selenium Manager`.
 
-```
-~/ansv-scraper/
-├── data/
-│   └── 2025/
-│       ├── Enero.xlsx
-│       ├── Febrero.xlsx
-│       ├── ...
-│       └── Octubre.xlsx
-│           ├── Hoja: 2025-10-01
-│           ├── Hoja: 2025-10-02
-│           ├── Hoja: 2025-10-03
-│           └── ...
-└── logs/
-    ├── ansv_202510.log
-    └── cron.log
-```
+      * **Causa:** Selenium 4.6+ intenta usar su propio "Selenium Manager" si no se le especifica una ruta, y este también falla en ARM64.
+      * **Solución:** Se especificó la ruta explícita en `ansv_scraper.py`: `service = Service(executable_path="/usr/local/bin/geckodriver")`.
 
----
+  * **Problema:** `crontab file is missing newline before EOF`.
 
-## 🔧 Comandos Útiles de Mantenimiento
-
-### Ver logs en tiempo real
-```bash
-docker-compose logs -f
-```
-
-### Reiniciar el contenedor
-```bash
-docker-compose restart
-```
-
-### Detener el contenedor
-```bash
-docker-compose down
-```
-
-### Ver logs del mes actual
-```bash
-tail -f logs/ansv_$(date +%Y%m).log
-```
-
-### Descargar archivos del VPS a tu Mac
-```bash
-# Desde tu Mac
-scp -r root@TU_IP_DEL_VPS:~/ansv-scraper/data ~/Downloads/ansv_backup
-```
-
-### Actualizar el script
-```bash
-# Editar el script
-nano ansv_scraper.py
-
-# Reconstruir y reiniciar
-docker-compose down
-docker-compose build
-docker-compose up -d
-```
-
----
-
-## 🛡️ OPCIÓN 2: Sin Docker (Instalación Directa en VPS)
-
-Si prefieres no usar Docker:
-
-### Paso 1-2: Igual que Opción 1
-
-### Paso 3: Instalar Dependencias del Sistema
-
-```bash
-sudo apt update
-sudo apt install -y python3 python3-pip wget unzip curl cron
-
-# Instalar Google Chrome
-wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-sudo apt install ./google-chrome-stable_current_amd64.deb -y
-rm google-chrome-stable_current_amd64.deb
-```
-
-### Paso 4: Crear Proyecto
-
-```bash
-mkdir -p ~/ansv-scraper
-cd ~/ansv-scraper
-mkdir -p logs
-```
-
-### Paso 5: Crear y Copiar Script
-
-```bash
-nano ansv_scraper.py
-```
-Copia el script Python de producción.
-
-### Paso 6: Instalar Librerías Python
-
-```bash
-pip3 install selenium webdriver-manager openpyxl pandas
-```
-
-### Paso 7: Configurar Cron
-
-```bash
-crontab -e
-```
-
-Agrega esta línea:
-```
-0 6 * * * cd ~/ansv-scraper && /usr/bin/python3 ansv_scraper.py >> logs/cron.log 2>&1
-```
-
-Guarda y cierra.
-
-### Paso 8: Verificar Cron
-
-```bash
-crontab -l
-```
-
----
-
-## 🔍 Solución de Problemas
-
-### El contenedor no inicia
-```bash
-# Ver logs detallados
-docker-compose logs
-
-# Reconstruir desde cero
-docker-compose down
-docker-compose build --no-cache
-docker-compose up -d
-```
-
-### Chrome no funciona en modo headless
-- Asegúrate de que el VPS tenga suficiente RAM (mínimo 2GB)
-- El Dockerfile ya incluye las flags necesarias
-
-### Los archivos no se están generando
-```bash
-# Verificar permisos
-sudo chmod -R 755 ~/ansv-scraper/data
-
-# Ejecutar manualmente para ver errores
-docker-compose exec ansv-scraper python /app/ansv_scraper.py
-```
-
-### Cambiar la hora de ejecución
-Edita el archivo `crontab`:
-```bash
-nano crontab
-```
-
-Cambia la línea:
-- `0 6 * * *` = 6:00 AM
-- `0 18 * * *` = 6:00 PM
-- `30 9 * * *` = 9:30 AM
-
-Luego:
-```bash
-docker-compose down
-docker-compose build
-docker-compose up -d
-```
-
----
-
-## 📱 Monitoreo y Alertas (Opcional)
-
-### Configurar notificaciones por email
-Puedes agregar al script Python:
-
-```python
-import smtplib
-from email.mime.text import MIMEText
-
-def enviar_alerta(mensaje):
-    msg = MIMEText(mensaje)
-    msg['Subject'] = 'Alerta ANSV Scraper'
-    msg['From'] = 'tu_email@gmail.com'
-    msg['To'] = 'destino@gmail.com'
-    
-    with smtplib.SMTP('smtp.gmail.com', 587) as server:
-        server.starttls()
-        server.login('tu_email@gmail.com', 'tu_password')
-        server.send_message(msg)
-```
-
----
-
-## 💰 Costos Estimados
-
-### Opción VPS Básico:
-- **DigitalOcean**: $6/mes (1 vCPU, 1GB RAM, 25GB SSD)
-- **Contabo**: €4/mes (4 vCPU, 8GB RAM, 50GB SSD)
-- **AWS Lightsail**: $5/mes (1 vCPU, 1GB RAM, 40GB SSD)
-
-### Recomendación:
-**Contabo VPS S** - €4/mes (mejor relación precio/características)
-
----
-
-## ✅ Checklist Final
-
-- [ ] VPS contratado y accesible por SSH
-- [ ] Docker y Docker Compose instalados
-- [ ] Todos los archivos creados en el servidor
-- [ ] Contenedor construido y ejecutándose
-- [ ] Logs verificados sin errores
-- [ ] Prueba manual exitosa
-- [ ] Cron configurado para 6:00 AM
-
----
-
-## 📞 Comandos de Resumen Rápido
-
-```bash
-# Ver estado
-docker-compose ps
-
-# Ver logs en vivo
-docker-compose logs -f
-
-# Ejecutar manualmente
-docker-compose exec ansv-scraper python /app/ansv_scraper.py
-
-# Descargar archivos
-scp -r root@IP:~/ansv-scraper/data ~/Downloads/
-
-# Reiniciar todo
-docker-compose restart
-```
-
----
-
-## 🎉 ¡Listo!
-
-Tu sistema está configurado para descargar automáticamente los datos de ANSV todos los días a las 6:00 AM.
-
-Los archivos se organizarán así:
-- **2025/Octubre.xlsx** con hojas por cada día del mes
-- **2025/Noviembre.xlsx** (se creará automáticamente)
-- **2026/Enero.xlsx** (cuando cambie el año)
+      * **Causa:** El sistema `cron` de Linux requiere que los archivos de crontab terminen con una línea vacía.
+      * **Solución:** Se añadió `RUN echo "" >> /etc/cron.d/ansv-cron` en el `Dockerfile`.
